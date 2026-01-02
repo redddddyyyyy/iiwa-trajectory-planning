@@ -1,0 +1,17 @@
+{
+  "samples": 4001,
+  "dt_s": 0.005,
+  "duration_s": 20.0,
+  "max_abs_joint_velocity_rad_s": [
+    146.217106,
+    240.014028,
+    401.738716,
+    0.425627999999989,
+    408.438176,
+    696.6636579999999,
+    423.3268819999999
+  ],
+  "global_max_abs_joint_velocity_rad_s": 696.6636579999999,
+  "spike_time_s": 0.335,
+  "spike_index": 67
+}

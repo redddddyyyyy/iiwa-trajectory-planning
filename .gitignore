@@ -1,0 +1,18 @@
+# MATLAB
+*.asv
+*.m~
+*.autosave
+*.slxc
+*.slx.autosave
+*.mex*
+*.mat
+*.fig
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+.venv/
