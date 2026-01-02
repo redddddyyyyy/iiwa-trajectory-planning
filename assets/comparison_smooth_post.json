@@ -1,0 +1,10 @@
+{
+  "raw": {
+    "global_max_abs_vel_rad_s": 348.55652899999995,
+    "global_max_abs_acc_rad_s2": 34877.902899999994
+  },
+  "smooth_post": {
+    "global_max_abs_vel_rad_s": 22.895955899999997,
+    "global_max_abs_acc_rad_s2": 2249.080272999999
+  }
+}
