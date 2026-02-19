@@ -18,3 +18,8 @@ __pycache__/
 .venv/
 .cache/
 ci_artifacts/
+
+# ROS2
+build/
+install/
+log/

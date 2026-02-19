@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>iiwa_trajectory_demo</name>
+  <version>0.1.0</version>
+  <description>Replay MATLAB-generated iiwa trajectories to a ROS2 JointTrajectory controller for Gazebo demos.</description>
+  <maintainer email="rajeevreddy1009@gmail.com">Rajeev Reddy</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <depend>rclpy</depend>
+  <depend>trajectory_msgs</depend>
+
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

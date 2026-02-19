@@ -75,6 +75,7 @@ python scripts/analyze_trajectory.py data/trajectory_raw_4001x7.txt --dt 0.005 -
 ├── data/                   Exported trajectories (Nx7)
 ├── assets/                 Plots and metrics used in README
 ├── docs/                   Report PDFs and roadmap notes
+├── simulation/             ROS2/Gazebo replay MVP (interview-ready)
 ├── scripts/                Python analysis utilities
 ├── .github/workflows/      CI checks
 └── requirements.txt        Python dependencies for analysis
@@ -82,7 +83,25 @@ python scripts/analyze_trajectory.py data/trajectory_raw_4001x7.txt --dt 0.005 -
 
 ## Next Step: Gazebo Simulation
 
-I am extending this work with a Gazebo simulation to provide a richer end-to-end showcase (robot model, world setup, and replay of generated trajectories).
+MVP replay tooling is now added under `simulation/` so trajectories can be replayed to a ROS2 joint trajectory controller in Gazebo.
+
+### Run This on Your ROS2 Machine (Next)
+
+```bash
+cd /path/to/iiwa-trajectory-planning/simulation/ros2_ws
+source /opt/ros/humble/setup.bash
+colcon build --symlink-install
+source install/setup.bash
+
+ros2 launch iiwa_trajectory_demo iiwa_replay.launch.py \
+  trajectory_file:=/path/to/iiwa-trajectory-planning/data/trajectory_smooth_4001x7.txt \
+  controller_topic:=/joint_trajectory_controller/joint_trajectory \
+  time_scale:=1.0
+```
+
+If your controller topic differs, replace `controller_topic` with your active joint trajectory topic.
+
+Runbook: [`simulation/README.md`](simulation/README.md)
 
 Roadmap: [`docs/gazebo_simulation_plan.md`](docs/gazebo_simulation_plan.md)
 
