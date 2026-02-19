@@ -1,7 +1,12 @@
 clear; clc; close all;
 
-robot = importrobot('iiwa7.urdf');
-robot.DataFormat = 'row';
+% Prefer MATLAB's built-in iiwa model; fall back to local URDF if needed.
+try
+    robot = loadrobot("kukaIiwa7","DataFormat","row");
+catch
+    robot = importrobot("iiwa7.urdf");
+    robot.DataFormat = "row";
+end
 eeName = robot.BodyNames{end};
 
 yawAlign = -pi/2;
@@ -97,7 +102,8 @@ for k = 1:frameStep:length(t_cmd)
     drawnow limitrate;
 end
 
-fname = 'singareddy rajeev.txt';
+if ~exist("data","dir"), mkdir("data"); end
+fname = fullfile("data", "trajectory_raw_4001x7.txt");
 fid   = fopen(fname,'w');
 for i = 1:numel(t_cmd)
     fprintf(fid, '%.8f %.8f %.8f %.8f %.8f %.8f %.8f\n', q_cmd(:,i));

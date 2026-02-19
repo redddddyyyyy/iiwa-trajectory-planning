@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  python-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Syntax check
+        run: python -m py_compile scripts/analyze_trajectory.py
+
+      - name: Smoke test trajectory analysis
+        env:
+          MPLBACKEND: Agg
+        run: |
+          python scripts/analyze_trajectory.py data/trajectory_raw_4001x7.txt --dt 0.005 --outdir ci_artifacts
+          test -f ci_artifacts/summary.json
+          test -f ci_artifacts/joint_angles.png
+          test -f ci_artifacts/joint_velocities.png
