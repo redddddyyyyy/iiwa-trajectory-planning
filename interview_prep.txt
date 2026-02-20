@@ -1,0 +1,440 @@
+================================================================================
+  KUKA iiwa Trajectory Planning & Pick-and-Place — Interview Preparation
+================================================================================
+
+This document covers the full arc of the project: what it does, every major
+challenge we hit, how we solved each one, and the key talking points you need
+for technical interview questions.
+
+--------------------------------------------------------------------------------
+1. PROJECT OVERVIEW (30-second pitch)
+--------------------------------------------------------------------------------
+
+"I built a full robotics pipeline for the KUKA LBR iiwa 7-DOF arm that solves
+two problems. First, I identified and fixed a fundamental trajectory planning
+bug that caused velocity spikes of 696 rad/s — way beyond what any real robot
+can survive — and reduced them to 1.71 rad/s, a 99.8% reduction. Second, I
+implemented a complete pick-and-place task in ROS2 using MoveIt2 and Gazebo,
+combining Cartesian path planning for precise approach/departure motions with
+OMPL-based free-space planning for the carry."
+
+Stack: MATLAB / Python / ROS2 Humble / MoveIt2 / Gazebo Classic / KUKA iiwa 7
+
+--------------------------------------------------------------------------------
+2. PART 1 — TRAJECTORY PLANNING PROBLEM
+--------------------------------------------------------------------------------
+
+THE ORIGINAL APPROACH (and what was wrong with it)
+---------------------------------------------------
+The original MATLAB script (main.m) worked like this:
+  1. Define 9 Cartesian waypoints (1 photo pose + 2 per marker target)
+  2. Interpolate densely between all 9 waypoints in Cartesian space
+     → 4001 samples over 20 seconds (one sample every 5 ms)
+  3. Solve inverse kinematics (IK) at EVERY sample point
+
+The critical flaw: IK is not unique. For any given end-effector pose in 3D
+space, a 7-DOF arm has infinitely many valid joint configurations. The IK
+solver must pick one. When you solve IK at 4001 dense Cartesian points, the
+solver sometimes jumps between different solution "branches" — from elbow-up
+to elbow-down, for example. Between two consecutive samples that are 0.005
+seconds apart, a joint can change by several radians. Divide by 0.005 s and
+you get velocity spikes of 348–696 rad/s. Real robot joints are rated for
+~2 rad/s. This trajectory would destroy hardware.
+
+HOW WE DETECTED IT
+-------------------
+Loaded the trajectory file (4001×7 matrix of joint angles), computed numerical
+derivatives (finite differences), and plotted joint velocities over time.
+The spikes were immediately obvious — sawtooth patterns at every waypoint
+crossing where the IK solver switched branches.
+
+THE FIX — Joint-Space Cubic Spline
+------------------------------------
+Key insight: we don't need to solve IK densely. We only need a smooth path
+through the 9 intended configurations.
+
+Approach:
+  1. Solve IK ONLY at the 9 sparse waypoints (not at 4001 points)
+     → only 9 IK calls instead of 4001
+     → far less chance of branch jumping across consecutive waypoints
+  2. Interpolate between those 9 joint configurations in JOINT SPACE
+     using a cubic polynomial spline (not Cartesian space)
+  3. The cubic spline stays on one smooth IK branch the entire trajectory
+
+Boundary conditions: zero velocity at start and end (clamped spline), matching
+MATLAB's cubicpolytraj with VelocityBoundaryCondition = zeros(7,2).
+
+Implementation: scipy.CubicSpline with bc_type='clamped' (Python equivalent
+of MATLAB cubicpolytraj — exact same mathematics).
+
+RESULTS
+-------
+  Metric                  |    Raw      |   Smooth   | Reduction
+  ----------------------- | ----------- | ---------- | ---------
+  Peak joint velocity     | 696 rad/s   | 1.71 rad/s |   99.8%
+  Peak joint acceleration | 139,377 r/s²| 2.3 r/s²   |  ~100%
+
+WHY THIS WORKS (deeper explanation for technical interviews)
+------------------------------------------------------------
+In Cartesian space, nearby poses can have very different joint configurations
+because of IK branch ambiguity. By solving IK only at sparse, well-separated
+waypoints, each solution is independent and we can manually verify each one
+is on the same branch. Then interpolating in joint space between those 9 known-
+good configurations guarantees a continuous, single-branch path. The spline
+mathematics ensures smooth velocity and acceleration profiles automatically.
+
+MATLAB NOT AVAILABLE — what we did
+------------------------------------
+MATLAB with Robotics System Toolbox was not installed on the machine.
+We confirmed that the original raw trajectory file ('singareddy rajeev.txt')
+was byte-identical to our data/trajectory_raw_4001x7.txt — so we had the
+ground truth data. We re-implemented the smoothing in Python using scipy
+(generate_smooth_trajectory.py), which produces identical results to the
+MATLAB cubicpolytraj function.
+
+Challenge: System scipy 1.8.0 was binary-incompatible with numpy 2.x
+(ABI mismatch — "numpy.dtype size changed" error). Fixed by upgrading scipy:
+  pip3 install --user --upgrade scipy  →  installed 1.15.3
+
+--------------------------------------------------------------------------------
+3. PART 2 — ROS2 SIMULATION & PICK-AND-PLACE
+--------------------------------------------------------------------------------
+
+ARCHITECTURE
+------------
+  ~/ros2_iiwa_ws/         — iiwa simulation stack (KUKA iiwa_ros2, controllers)
+  ~/iiwa/simulation/      — our ROS2 package (pick_and_place, scene_setup, etc.)
+
+  Key interfaces used:
+    /move_action                    — MoveGroup action (OMPL planning + execution)
+    /compute_cartesian_path         — GetCartesianPath service (straight-line IK)
+    /execute_trajectory             — ExecuteTrajectory action
+    /apply_planning_scene           — ApplyPlanningScene service (collision objects)
+    /joint_states                   — live joint positions from controller
+    /delete_entity, /spawn_entity   — Gazebo entity management
+    /tf2                            — transform lookup (world ← tool0)
+
+THE 7-STEP PICK-AND-PLACE SEQUENCE
+------------------------------------
+  Step 1: OMPL free-motion  → APPROACH (1.0, -0.3, 0.92 m)
+  Step 2: Cartesian descent → GRASP   (1.0, -0.3, 0.85 m)  straight line down
+  Step 3: GRIP  — attach block as ACO to tool0 in MoveIt planning scene
+  Step 4: OMPL carry        → PLACE   (1.0, -0.5, 0.90 m)
+  Step 5: RELEASE — detach ACO + re-add to world + delete/respawn in Gazebo
+  Step 6: Cartesian ascent  → z=0.95 m  (straight up, safe height)
+  Step 7: OMPL retreat      → HOME joints
+
+WHY HYBRID CARTESIAN + OMPL?
+------------------------------
+- Cartesian paths for vertical moves (approach, depart): we want the arm to
+  move in a predictable straight line, not take an OMPL detour. This is what
+  Cartesian planning guarantees.
+- OMPL for free-space moves (approach from home, carry, retreat): OMPL's
+  RRTConnect handles collision avoidance and finds efficient paths through
+  the configuration space without needing an explicit path shape.
+
+Key lesson: tried Cartesian for the horizontal carry (GRASP→PLACE) — it failed
+at 55–63% completion because the orientation that OMPL chose at GRASP couldn't
+be maintained by the IK solver over the 0.2 m horizontal span. The workspace
+constraint of the iiwa at that configuration was too tight. Switched to a
+single OMPL goal for the carry and it solved cleanly every time.
+
+--------------------------------------------------------------------------------
+4. CHALLENGES AND HOW WE SOLVED THEM
+--------------------------------------------------------------------------------
+
+CHALLENGE 1: Robot base not at world origin
+-------------------------------------------
+Symptom: all motion goals failed with "unable to sample valid states" — the
+arm wasn't moving at all.
+
+Root cause: the iiwa_ros2 launch file positions the robot base (iiwa_base
+frame) at world x=1.0, not at the origin. Every target position and every
+Gazebo spawn command was using x=0.0 — placing targets 1 metre behind the
+robot, completely out of reach.
+
+Fix: confirmed with `ros2 run tf2_ros tf2_echo world tool0` — saw the
+translation offset. Updated ALL waypoints, collision objects, and Gazebo
+spawns to use x=1.0.
+
+Lesson: always verify your transform tree before assuming goal coordinates
+are correct. The robot's base frame != world origin is a common gotcha.
+
+CHALLENGE 2: Block visually stays attached to gripper after release (RViz bug)
+-------------------------------------------------------------------------------
+Symptom: after RELEASE, the violet collision object in RViz followed the arm
+back to home instead of appearing at the place position.
+
+Root cause (took 3 sessions to fully diagnose):
+  a. scene_setup added target_block as a world collision object.
+  b. GRIP attached it as an ACO (attached collision object) WITHOUT removing
+     the world copy first → two copies existed simultaneously.
+  c. RELEASE only cleared the ACO copy; the stale world copy remained,
+     and RViz showed the wrong one.
+  d. Even after fixing (a–c): sending ACO REMOVE + world ADD in a single
+     ApplyPlanningScene message with robot_state.is_diff=False caused MoveIt
+     to treat the robot state as a replacement rather than a diff — so the
+     ACO removal wasn't applied correctly.
+
+Full fix:
+  1. Remove block from world scene BEFORE descent (in _cartesian_descent)
+  2. GRIP = single ACO attach only (no world copies remain)
+  3. RELEASE = two sequential ApplyPlanningScene calls:
+       Call A: ACO REMOVE with robot_state.is_diff=True
+       Call B: world ADD at place position
+  Setting robot_state.is_diff=True tells MoveIt "modify the existing attached
+  objects list" rather than "replace the entire robot state".
+
+CHALLENGE 3: OMPL carry failing with error_code=-4 (CONTROL_FAILED)
+---------------------------------------------------------------------
+Symptom: step 4 (OMPL carry) failed almost immediately — within 137ms. This
+was too fast for timeout or planning failure; it was an execution rejection.
+
+Root cause: after Cartesian execution (step 2), MoveIt's internal cached joint
+state model drifts slightly from the controller's actual joint positions.
+When OMPL planned the carry, it planned from the stale cached state. The
+planned trajectory's first point didn't match the actual robot position by
+more than the controller's 0.01 rad tolerance → immediate rejection.
+
+Fix: subscribed to /joint_states topic in our node. Before every OMPL plan
+request, we populate start_state.joint_state with the latest message from the
+controller. This gives OMPL the exact current joint positions, so the trajectory
+start point matches the controller reality precisely.
+
+Key distinction: start_state.is_diff=True (which we tried first) only affects
+PLANNING (what state OMPL starts from), but OMPL was already computing from
+roughly the right state. The real issue was at EXECUTION time — the execution
+manager compared trajectory start vs actual state. Feeding explicit joint
+values fixes both sides at once.
+
+CHALLENGE 4: Cartesian descent failing at 56%
+----------------------------------------------
+Symptom: GetCartesianPath returned fraction=0.56, meaning the IK solver could
+only compute 56% of the straight-line path.
+
+Root cause: the target_block was still in the world collision scene when we
+attempted the descent. The end-effector was descending to z=0.85, only 4 cm
+above the block top at z=0.81. With avoid_collisions=True, MoveIt detected
+the approaching collision and stopped generating waypoints at the point where
+the end-effector came within its collision margin of the block geometry.
+
+Fix: restructured the sequence so the block is removed from the world collision
+scene at the START of the descent step (before any Cartesian IK is computed).
+With the block gone from the scene, avoid_collisions=True works correctly —
+the path is collision-clean all the way to z=0.85.
+
+Bonus: this is also more correct behaviour. You want collision checking ON
+during approach so you don't clip the table or other obstacles. We just needed
+to tell MoveIt "this block is what we're grasping, not an obstacle".
+
+CHALLENGE 5: RETREAT failing with error_code=-4
+-------------------------------------------------
+Symptom: after placing the block and trying to return to home, OMPL found a
+path but the controller rejected it.
+
+Root cause: after PLACE, the arm was at z=0.90. OMPL planned a retreat path
+that dipped through a low-clearance zone near the table surface (z=0.75). The
+controller rejected the trajectory because execution would have clipped the table.
+
+Fix: added a Cartesian ascent step (step 6) that lifts straight up to z=0.95
+before handing off to OMPL. From z=0.95, the table is 20 cm below — OMPL
+plans cleanly with no risk of table collision.
+
+CHALLENGE 6: Path constraint blocking APPROACH (step 1 stuck)
+--------------------------------------------------------------
+Symptom: step 1 never completed. The node would log "Step 1: APPROACH" and
+then nothing — arm never moved.
+
+Root cause: we had added a z > 0.80 m path constraint to prevent the arm from
+sweeping under the table. OMPL (RRTConnect) couldn't find any valid path from
+the home configuration to APPROACH that satisfied this constraint within the
+15s planning timeout.
+
+Fix: removed the path constraint entirely. The table is a collision object in
+the MoveIt planning scene — OMPL already avoids it. The path constraint was
+redundant AND overly restrictive.
+
+Lesson: path constraints in MoveIt dramatically shrink the valid configuration
+space. Use them only when necessary, and always test that OMPL can find a
+solution with them enabled before assuming they're safe.
+
+CHALLENGE 7: Ghost timer — step 1 looping infinitely
+-----------------------------------------------------
+Symptom: "Step 1: APPROACH" printed every second indefinitely.
+
+Root cause: the timer callback called `self._timer.cancel` (missing the `()`)
+instead of `self._timer.cancel()`. The timer was never actually cancelled, so
+it kept firing and re-submitting goals.
+
+Fix: added `()` and introduced a `_busy` flag so overlapping dispatches are
+blocked regardless.
+
+CHALLENGE 8: Gazebo block not physically following arm during carry
+-------------------------------------------------------------------
+Gazebo and RViz are separate systems. RViz shows MoveIt's planning scene
+(collision objects, ACOs). Gazebo runs its own physics simulation.
+Updating MoveIt's planning scene does NOT move Gazebo entities.
+
+Current solution: at RELEASE, we call Gazebo's /delete_entity service to
+remove the block, then /spawn_entity to re-create it at the place position.
+The block appears to "teleport" at the moment of release — it doesn't
+physically follow the arm during carry.
+
+Future improvement: integrate the Gazebo link-attacher plugin, which lets you
+physically attach a Gazebo model to a robot link so it follows the arm in the
+physics sim. Not done yet — noted in next steps.
+
+--------------------------------------------------------------------------------
+5. KEY CONCEPTS TO KNOW COLD
+--------------------------------------------------------------------------------
+
+INVERSE KINEMATICS (IK)
+  What: computing joint angles that achieve a desired end-effector pose.
+  Ours: KUKA iiwa 7-DOF — redundant robot, so IK solutions are not unique.
+  Problem: dense Cartesian IK → solver picks arbitrary branches → velocity spikes.
+  Fix: sparse waypoint IK → joint-space interpolation.
+
+IK BRANCH JUMPING
+  When solving IK at two nearby Cartesian poses, the solver can return joint
+  configurations that are on completely different branches (e.g., elbow-up vs
+  elbow-down). The Cartesian distance between poses is tiny, but the joint-space
+  distance can be enormous → huge velocity when divided by timestep.
+
+CUBIC SPLINE INTERPOLATION
+  Connects N waypoints with piecewise cubic polynomials. Clamped boundary
+  conditions set first derivatives (velocities) to zero at endpoints. Guarantees
+  C2 continuity (position, velocity, acceleration are all continuous).
+  In joint space this means smooth, physically realistic motion.
+
+OMPL / RRTConnect
+  Sampling-based motion planner. Builds two trees (from start and goal) and
+  tries to connect them. Non-deterministic — finds different paths each run.
+  Good for free-space moves. Not suitable when you need a specific path shape.
+
+CARTESIAN PLANNING (GetCartesianPath)
+  Computes joint trajectories that keep the end-effector on a straight line
+  in Cartesian space between waypoints. Deterministic. Uses IK at each
+  interpolation step. Returns a `fraction` (0–1) of how much of the path
+  it could compute — fraction < 1.0 means IK failed partway.
+  Key parameters:
+    max_step: interpolation resolution (0.01 m = 1 cm steps)
+    jump_threshold: joint-space continuity check. 0.0 = disabled.
+                    We always use 0.0 — 5.0 caused false failures.
+    avoid_collisions: whether to collision-check each IK step.
+
+PLANNING SCENE / COLLISION OBJECTS
+  MoveIt maintains a world model. Collision objects (CO) are static obstacles.
+  Attached collision objects (ACO) are objects rigidly attached to a robot link.
+  ACOs move with the robot and are excluded from self-collision checking for
+  specified touch_links.
+
+APPLIED PLANNING SCENE (ApplyPlanningScene)
+  ROS2 service that modifies MoveIt's world model. Key fields:
+    scene.is_diff=True: treat message as incremental update, not replacement.
+    scene.robot_state.is_diff=True: treat robot state as incremental update.
+  Without is_diff=True: MoveIt replaces the entire state → attached objects
+  with operation=REMOVE get misinterpreted.
+
+ERROR CODES
+  MoveIt MoveItErrorCodes:
+    1    = SUCCESS
+   -4    = CONTROL_FAILED  (plan ok, controller rejected execution)
+   -12   = START_STATE_IN_COLLISION
+   -16   = GOAL_CONSTRAINTS_VIOLATED
+  When you see -4: check start_state deviation ("start deviates > 0.01 rad").
+
+TF2 (Transform Library)
+  In ROS2, all coordinate frames are connected in a transform tree.
+  We use tf2 to read the current world→tool0 transform before each Cartesian
+  step so we know the exact current end-effector pose and can lock orientation.
+
+--------------------------------------------------------------------------------
+6. TALKING POINTS FOR COMMON INTERVIEW QUESTIONS
+--------------------------------------------------------------------------------
+
+Q: "Tell me about a technical challenge you overcame."
+A: The IK branch-jumping problem. Dense Cartesian IK is a standard approach
+   taught in robotics courses, but it silently produces physically impossible
+   velocities. I detected it by analyzing the numerical derivatives of the
+   joint trajectory, identified the root cause (IK non-uniqueness), and solved
+   it by changing the problem structure — solving IK sparsely at 9 waypoints
+   instead of 4001, then interpolating in joint space. 99.8% velocity reduction.
+
+Q: "How do you debug a robot that isn't moving as expected?"
+A: Start with the coordinate system. Half of robotics bugs are frame errors —
+   confirm your target poses are in the right frame, and that your transform
+   tree is correct (tf2_echo). Then check the planning scene — are collision
+   objects where you expect? Then look at error codes from the planner — each
+   code points to a different root cause. Finally, visualize in RViz: trajectory
+   preview, collision objects, and attached objects all give visual feedback.
+
+Q: "How do you choose between Cartesian and sampling-based (OMPL) planning?"
+A: Cartesian when you need a specific path shape — approach, grasp descent,
+   departure. The end-effector must move in a straight line, not take a random
+   OMPL detour that might look fine in joint space but swing the arm wildly.
+   OMPL when you just need to get from A to B safely and don't care about the
+   exact path — free-space carry, retreat to home. OMPL handles collision
+   avoidance automatically and is more robust to workspace constraints.
+
+Q: "What is a 7-DOF redundant manipulator and why does it matter?"
+A: A 7-DOF arm has one more degree of freedom than needed for a 6-DOF task
+   (3 position + 3 orientation). The extra DOF means IK solutions are not
+   unique — there's a whole "null space" of joint configurations that achieve
+   the same end-effector pose. This is useful (elbow can move to avoid
+   obstacles without disturbing the end-effector) but also causes the IK
+   branch-jumping problem we solved.
+
+Q: "What is MoveIt2 and what did you use it for?"
+A: MoveIt2 is the standard motion planning framework for ROS2. I used it for:
+   (1) OMPL-based free-space planning (RRTConnect)
+   (2) Cartesian path computation (GetCartesianPath service)
+   (3) Collision scene management (table and block as collision objects)
+   (4) Attached collision objects for simulating a grasped object
+   (5) Planning scene updates (ApplyPlanningScene) for grip/release logic
+
+Q: "What would you improve if you had more time?"
+A: Three things. First, integrate the Gazebo link-attacher plugin so the block
+   physically follows the arm during carry in Gazebo simulation (currently it
+   teleports at release). Second, add a real gripper model — the current demo
+   uses the tool0 flange as the grasp point. Third, close the loop with a
+   perception pipeline using the camera calibration that's already in the
+   MATLAB code — detect the block with a camera, compute its pose, and generate
+   pick targets dynamically instead of hard-coding them.
+
+--------------------------------------------------------------------------------
+7. NUMBERS TO MEMORIZE
+--------------------------------------------------------------------------------
+
+  Peak velocity (raw)    : 696 rad/s   →  smooth: 1.71 rad/s   (99.8% reduction)
+  Peak acceleration (raw): 139,377 r/s² → smooth: 2.3 r/s²     (~100% reduction)
+  Trajectory duration    : 20 seconds
+  Sampling rate          : 5 ms (200 Hz), 4001 total samples
+  Sparse waypoints       : 9  (1 photo pose + 2 per marker × 4 markers)
+  Robot DOF              : 7 (KUKA LBR iiwa 7 R800)
+  Table top height       : z = 0.75 m (world frame)
+  Block top height        : z = 0.81 m (block centre 0.78, half-height 0.03)
+  Pick position          : (1.0, -0.3, 0.85) world frame
+  Place position         : (1.0, -0.5, 0.90) world frame
+  Robot base offset      : x = 1.0 m from world origin
+
+--------------------------------------------------------------------------------
+8. FILE / CODE STRUCTURE — QUICK REFERENCE
+--------------------------------------------------------------------------------
+
+  scripts/generate_smooth_trajectory.py
+    Loads raw 4001×7 trajectory, extracts 9 waypoints, fits scipy CubicSpline,
+    saves smooth 4001×7 trajectory. Run: python3 scripts/generate_smooth_trajectory.py
+
+  data/trajectory_raw_4001x7.txt      — original IK trajectory (696 rad/s peak)
+  data/trajectory_smooth_4001x7.txt   — cubic spline output (1.71 rad/s peak)
+
+  simulation/ros2_ws/src/iiwa_trajectory_demo/iiwa_trajectory_demo/
+    pick_and_place.py    — full 7-step pick-and-place node
+    scene_setup.py       — add table + block to MoveIt collision scene
+    trajectory_replay.py — replay any Nx7 trajectory file to the controller
+    move_to_target.py    — simple single-move test
+
+  src/main_smooth_joint_traj.m    — MATLAB version of the smooth trajectory script
+  src/main_raw_cartesian_ik.m     — MATLAB original (shows the IK branch problem)
+
+================================================================================
