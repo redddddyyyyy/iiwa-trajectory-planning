@@ -168,11 +168,11 @@ class PickAndPlaceNode(Node):
     def _move_to(self, x, y, z):
         req = MotionPlanRequest()
         req.group_name = 'iiwa_arm'
-        req.pipeline_id = 'ompl'      # Pilz PTP needs full orientation; OMPL is
-        req.planner_id = 'RRTConnect' # more flexible with position-only goals
+        req.pipeline_id = 'ompl'
+        req.planner_id = 'RRTConnect'
         req.num_planning_attempts = 10
         req.allowed_planning_time = 15.0
-        req.max_velocity_scaling_factor = 0.5   # faster = smoother-looking
+        req.max_velocity_scaling_factor = 0.5
         req.max_acceleration_scaling_factor = 0.5
 
         req.workspace_parameters.header.frame_id = 'world'
@@ -183,9 +183,35 @@ class PickAndPlaceNode(Node):
         req.workspace_parameters.max_corner.y = 1.5
         req.workspace_parameters.max_corner.z = 2.0
 
+        # Goal constraint
         c = Constraints()
         c.position_constraints.append(_pos_constraint(x, y, z))
         req.goal_constraints.append(c)
+
+        # Path constraint: keep tool0 above table (z > 0.80) at ALL times.
+        # This prevents the arm from sweeping under/through the table during transit.
+        path_pos = PositionConstraint()
+        path_pos.header.frame_id = 'world'
+        path_pos.link_name = 'tool0'
+        path_pos.weight = 1.0
+
+        # A tall box from z=0.80 upward covers the safe operating zone
+        path_box = SolidPrimitive()
+        path_box.type = SolidPrimitive.BOX
+        path_box.dimensions = [4.0, 4.0, 2.0]   # wide XY, 2 m tall
+
+        path_tp = Pose()
+        path_tp.position.x = 1.0
+        path_tp.position.y = -0.3
+        path_tp.position.z = 1.80   # centre of [0.80, 2.80]
+        path_tp.orientation.w = 1.0
+
+        path_bvol = BoundingVolume()
+        path_bvol.primitives.append(path_box)
+        path_bvol.primitive_poses.append(path_tp)
+        path_pos.constraint_region = path_bvol
+
+        req.path_constraints.position_constraints.append(path_pos)
 
         goal = MoveGroup.Goal()
         goal.request = req
