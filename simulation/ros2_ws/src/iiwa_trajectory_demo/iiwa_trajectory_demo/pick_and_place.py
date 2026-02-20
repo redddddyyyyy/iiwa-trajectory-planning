@@ -188,31 +188,6 @@ class PickAndPlaceNode(Node):
         c.position_constraints.append(_pos_constraint(x, y, z))
         req.goal_constraints.append(c)
 
-        # Path constraint: keep tool0 above table (z > 0.80) at ALL times.
-        # This prevents the arm from sweeping under/through the table during transit.
-        path_pos = PositionConstraint()
-        path_pos.header.frame_id = 'world'
-        path_pos.link_name = 'tool0'
-        path_pos.weight = 1.0
-
-        # A tall box from z=0.80 upward covers the safe operating zone
-        path_box = SolidPrimitive()
-        path_box.type = SolidPrimitive.BOX
-        path_box.dimensions = [4.0, 4.0, 2.0]   # wide XY, 2 m tall
-
-        path_tp = Pose()
-        path_tp.position.x = 1.0
-        path_tp.position.y = -0.3
-        path_tp.position.z = 1.80   # centre of [0.80, 2.80]
-        path_tp.orientation.w = 1.0
-
-        path_bvol = BoundingVolume()
-        path_bvol.primitives.append(path_box)
-        path_bvol.primitive_poses.append(path_tp)
-        path_pos.constraint_region = path_bvol
-
-        req.path_constraints.position_constraints.append(path_pos)
-
         goal = MoveGroup.Goal()
         goal.request = req
         goal.planning_options.plan_only = False
@@ -319,17 +294,36 @@ class PickAndPlaceNode(Node):
     # ── Release ───────────────────────────────────────────────────────────────
 
     def _release(self):
+        # Step A: detach block from robot arm only (separate from world re-add).
+        # Combining detach + world ADD in one diff causes MoveIt to not clear
+        # the attached object from RViz/the planning scene correctly.
         scene = PlanningScene()
         scene.is_diff = True
 
-        # Detach from robot
         aco = AttachedCollisionObject()
         aco.link_name = 'tool0'
-        aco.object.id = 'target_block'
-        aco.object.operation = CollisionObject.REMOVE
+        obj_remove = CollisionObject()
+        obj_remove.id = 'target_block'
+        obj_remove.operation = CollisionObject.REMOVE
+        aco.object = obj_remove
         scene.robot_state.attached_collision_objects.append(aco)
 
-        # Place back in world at new position
+        req = ApplyPlanningScene.Request()
+        req.scene = scene
+        fut = self._scene_client.call_async(req)
+        fut.add_done_callback(self._on_detach_done)
+
+    def _on_detach_done(self, future):
+        if not future.result().success:
+            self.get_logger().error('Detach from arm failed.')
+            self._advance(False)
+            return
+        self.get_logger().info('Block detached from arm. Placing in world at new position...')
+
+        # Step B: add block back to world at the PLACE position.
+        scene = PlanningScene()
+        scene.is_diff = True
+
         obj = CollisionObject()
         obj.header.frame_id = 'world'
         obj.id = 'target_block'
@@ -352,14 +346,14 @@ class PickAndPlaceNode(Node):
         req = ApplyPlanningScene.Request()
         req.scene = scene
         fut = self._scene_client.call_async(req)
-        fut.add_done_callback(self._on_release_scene_done)
+        fut.add_done_callback(self._on_world_place_done)
 
-    def _on_release_scene_done(self, future):
+    def _on_world_place_done(self, future):
         if future.result().success:
-            self.get_logger().info('Block detached in MoveIt. Updating Gazebo...')
+            self.get_logger().info('Block placed in MoveIt world. Updating Gazebo...')
             self._gazebo_respawn()
         else:
-            self.get_logger().error('Detach from MoveIt failed.')
+            self.get_logger().error('World place in MoveIt failed.')
             self._advance(False)
 
     def _gazebo_respawn(self):

@@ -118,7 +118,7 @@ Table top surface: **z = 0.75 m** | Block top surface: **z = 0.81 m**
 | 6 | RELEASE | — | detach + Gazebo re-spawn at (1.0, -0.5, 0.78) |
 | 7 | RETREAT | HOME joints | OMPL to SRDF ready state |
 
-**Path constraint (all moves):** `tool0` must stay above z=0.80 throughout to prevent elbow-down configurations that sweep through the table.
+**Path constraint:** Removed — was causing step 1 to get stuck (OMPL couldn't find any valid path from home satisfying the constraint). MoveIt table collision object handles actual collision avoidance.
 
 ---
 
@@ -244,6 +244,13 @@ colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release -DCMAKE_P
 - Added path constraint (z > 0.80) to prevent elbow-down sweeping through table
 - Read original `main.m` from final project zip — confirms raw trajectory method
 
+### Session 3
+- Path constraint (z > 0.80) was blocking step 1 — OMPL couldn't find any valid path from home to APPROACH within 15s timeout. **Removed path constraint entirely.** All 7 steps now complete successfully.
+- **Remaining bug:** Violet block collision object stays visually attached to gripper (tool0) in RViz after step 6 RELEASE, and follows arm during RETREAT. Block should appear on the table at place position.
+  - Root cause: `ApplyPlanningScene` diff with detach + world-add in same message — MoveIt accepts the world ADD but doesn't clear the attached object.
+  - Attempted fix: split into two sequential `ApplyPlanningScene` calls (detach-only first, then world ADD). Still not working — block stays attached visually.
+  - **This is the open bug for next session.**
+
 ---
 
 ## Known Issues / Debugging
@@ -257,22 +264,24 @@ colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release -DCMAKE_P
 | Planning fails error 99999 | Goal unreachable or start state in collision | Restart everything; verify x=1.0 offset |
 | GRIP fails (ApplyPlanningScene=False) | Attached object in tool0 frame — wrong direction | Use world frame for attached object position |
 | RETREAT fails error -16 | Pilz PTP can't reach home from post-PLACE config | Use OMPL with joint goal for retreat |
-| Arm sweeps through/under table | OMPL picks elbow-down path | Path constraint: tool0 z > 0.80 at all times |
+| Arm sweeps through/under table | OMPL picks elbow-down path | Removed path constraint (was blocking step 1); table collision object handles actual avoidance |
+| Step 1 stuck, arm never moves | Path constraint too tight for OMPL from home | Removed path constraint from `_move_to()` |
 | Step 1 spams infinitely | Ghost timer `.cancel` (missing `()`) | Fixed — `_busy` flag + proper cancel |
+| Violet block stays on gripper after RELEASE | `ApplyPlanningScene` diff not detaching attached object | **OPEN** — tried two-stage detach (detach-only call, then world-ADD call), still not clearing |
 
 ---
 
 ## Next Steps
 
-1. **Test path constraint** — verify arm stays above table during all transit moves
+1. **Fix RELEASE detach bug (PRIORITY)** — violet block stays on gripper in RViz/MoveIt after step 6.
+   - Two approaches to try next:
+     a. Use `moveit_commander` Python API (`scene.remove_attached_object()` then `scene.add_box()`) instead of raw `ApplyPlanningScene` service
+     b. Check if `scene.robot_state.is_diff` needs to be set separately, or if the `aco.object` needs a `header.frame_id` for REMOVE to work
+     c. Try removing the object entirely first (REMOVE from world too), then re-adding to world fresh
 2. **Generate smooth trajectory** — requires MATLAB R2023a+ with Robotics System Toolbox
    - Run `src/main_smooth_joint_traj.m` → produces `data/trajectory_smooth_4001x7.txt`
    - Replay with `trajectory_replay` node
-3. **Visual gripper** — install `gazebo_ros_link_attacher` for physics-based gripping:
-   ```bash
-   sudo apt install ros-humble-gazebo-ros-link-attacher
-   ```
-4. **Compare raw vs smooth** trajectories in Gazebo simulation
+3. **Compare raw vs smooth** trajectories in Gazebo simulation
 
 ---
 
