@@ -1,114 +1,263 @@
-# KUKA iiwa 7-DOF Trajectory Planning
+# KUKA iiwa 7-DOF Trajectory Planning + MoveIt2 Pick-and-Place
 
 [![CI](https://github.com/redddddyyyyy/iiwa-trajectory-planning/actions/workflows/ci.yml/badge.svg)](https://github.com/redddddyyyyy/iiwa-trajectory-planning/actions/workflows/ci.yml)
-[![MATLAB](https://img.shields.io/badge/MATLAB-R2023a+-orange?style=flat&logo=mathworks)](https://www.mathworks.com/products/matlab.html)
+[![ROS2](https://img.shields.io/badge/ROS2-Humble-blue?style=flat&logo=ros)](https://docs.ros.org/en/humble/)
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue?style=flat&logo=python)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Smooth joint-space trajectory generation for a **KUKA LBR iiwa 7 R800** manipulator, eliminating IK branch-jump discontinuities that create unrealistic velocity spikes.
+Smooth joint-space trajectory generation for a **KUKA LBR iiwa 7 R800** manipulator, eliminating IK branch-jump discontinuities that create unrealistic velocity spikes — now with a full **MoveIt2 pick-and-place simulation** in Gazebo.
+
+---
 
 ## Demo Preview
 
-A short simulation video/GIF is planned as part of the Gazebo integration. Current raw vs smoothed behavior is shown below.
+| Raw vs Smooth Trajectory | MoveIt2 Pick-and-Place (Gazebo) |
+|:---:|:---:|
+| ![Demo Preview](assets/demo_preview_raw_vs_smooth.png) | Pick → Grip → Carry → Place → Retreat |
 
-![Demo Preview](assets/demo_preview_raw_vs_smooth.png)
+---
 
 ## Key Results
 
-| Metric | Before | After | Improvement |
+| Metric | Before (Raw) | After (Smooth) | Improvement |
 |--------|-------:|------:|:-----------:|
 | Peak Joint Velocity (rad/s) | 348.56 | 22.90 | **93.4%** |
 | Peak Joint Acceleration (rad/s²) | 34,877.90 | 2,249.08 | **93.6%** |
 
+---
+
 ## Why This Matters
 
-Dense Cartesian interpolation with pointwise IK can switch IK branches between adjacent samples. That creates physically impossible joint velocities and unstable command streams.
+Dense Cartesian interpolation with pointwise IK can switch IK branches between adjacent samples, creating physically impossible joint velocities and unstable command streams.
 
-This project solves IK only at sparse waypoints, then time-scales a joint-space trajectory for smooth and controller-ready motion.
+This project solves IK only at **9 sparse waypoints**, then applies cubic polynomial time-scaling for smooth, controller-ready motion.
 
-## Quick Start
+---
 
-### Requirements
+## What's Working
 
-- MATLAB R2023a+ with Robotics System Toolbox
-- Python 3.11+ for analysis utilities
+- [x] Smooth trajectory generation (MATLAB)
+- [x] Python trajectory analysis + plots
+- [x] ROS2 Humble + Gazebo Classic simulation
+- [x] MoveIt2 motion planning (`iiwa_arm` group)
+- [x] Collision-aware planning scene (table + target block)
+- [x] **Full pick-and-place demo** — approach → grasp → grip → lift → place → release → retreat
 
-Notes:
-- Scripts first try `loadrobot("kukaIiwa7")`.
-- If your MATLAB install does not include that model, add `iiwa7.urdf` at repo root and scripts will fall back to `importrobot("iiwa7.urdf")`.
-
-### Run MATLAB
-
-```matlab
-% Smooth trajectory (recommended)
-run('src/main_smooth_joint_traj.m')
-
-% Raw baseline (for comparison)
-run('src/main_raw_cartesian_ik.m')
-```
-
-### Analyze with Python
-
-```bash
-python -m pip install -r requirements.txt
-python scripts/analyze_trajectory.py data/trajectory_raw_4001x7.txt --dt 0.005 --outdir assets
-```
-
-### Outputs
-
-- `data/trajectory_smooth_4001x7.txt`: smoothed controller-ready joint trajectory (200 Hz)
-- `data/trajectory_raw_4001x7.txt`: raw baseline trajectory
-- `assets/*.png`, `assets/*.json`: plots and summary statistics
-
-## Method Overview
-
-1. Define placement task over a 4-target marker grid with fixed end-effector orientation.
-2. Compute calibration transforms (Base, TCP, Camera, Marker).
-3. Solve IK only at 9 sparse waypoints to reduce branch-jumps.
-4. Generate a smooth 200 Hz joint trajectory using cubic polynomial time-scaling.
-5. Validate feasibility via joint angle, velocity, and acceleration plots.
+---
 
 ## Repository Structure
 
 ```text
-├── src/                    MATLAB trajectory generation scripts
-├── data/                   Exported trajectories (Nx7)
-├── assets/                 Plots and metrics used in README
-├── docs/                   Report PDFs and roadmap notes
-├── simulation/             ROS2/Gazebo replay MVP (interview-ready)
-├── scripts/                Python analysis utilities
-├── .github/workflows/      CI checks
-└── requirements.txt        Python dependencies for analysis
+├── src/                          MATLAB trajectory generation scripts
+│   ├── main_smooth_joint_traj.m  Sparse-waypoint IK + cubic interpolation
+│   └── main_raw_cartesian_ik.m   Dense Cartesian baseline (shows problem)
+├── data/
+│   ├── trajectory_raw_4001x7.txt     Baseline raw trajectory
+│   └── trajectory_smooth_4001x7.txt  Smooth output (generated by MATLAB)
+├── assets/                       Plots and result images
+├── docs/                         Technical report PDFs
+├── scripts/
+│   └── analyze_trajectory.py     Velocity/acceleration analysis + plots
+├── simulation/
+│   └── ros2_ws/src/iiwa_trajectory_demo/
+│       └── iiwa_trajectory_demo/
+│           ├── trajectory_replay.py  Replay Nx7 file to joint controller
+│           ├── scene_setup.py        Add table + block as MoveIt collision objects
+│           ├── move_to_target.py     Move end-effector above target block
+│           └── pick_and_place.py     Full pick-and-place sequence
+├── CLAUDE.md                     Full session context for Claude Code
+└── requirements.txt              Python analysis dependencies
 ```
 
-## Next Step: Gazebo Simulation
+---
 
-MVP replay tooling is now added under `simulation/` so trajectories can be replayed to a ROS2 joint trajectory controller in Gazebo.
+## Gazebo Simulation — Full Run Instructions
 
-### Run This on Your ROS2 Machine (Next)
+### Environment
+
+| Item | Value |
+|------|-------|
+| OS | Ubuntu 22.04 |
+| ROS | ROS2 Humble |
+| Simulator | Gazebo Classic |
+| Sim stack | [`iiwa_ros2`](https://github.com/ICube-Robotics/iiwa_ros2) |
+
+### Prerequisites
 
 ```bash
+# Clone and build the iiwa sim stack
+mkdir -p ~/ros2_iiwa_ws/src && cd ~/ros2_iiwa_ws/src
+git clone https://github.com/ICube-Robotics/iiwa_ros2.git
+cd ~/ros2_iiwa_ws
+source /opt/ros/humble/setup.bash
+colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+
+# Build this repo's ROS2 package
 cd /path/to/iiwa-trajectory-planning/simulation/ros2_ws
 source /opt/ros/humble/setup.bash
 colcon build --symlink-install
-source install/setup.bash
-
-ros2 launch iiwa_trajectory_demo iiwa_replay.launch.py \
-  trajectory_file:=/path/to/iiwa-trajectory-planning/data/trajectory_smooth_4001x7.txt \
-  controller_topic:=/joint_trajectory_controller/joint_trajectory \
-  time_scale:=1.0
 ```
 
-If your controller topic differs, replace `controller_topic` with your active joint trajectory topic.
+---
 
-Runbook: [`simulation/README.md`](simulation/README.md)
+### Step 1 — Launch Planning Stack (Terminal 1, keep open)
 
-Roadmap: [`docs/gazebo_simulation_plan.md`](docs/gazebo_simulation_plan.md)
+```bash
+cd ~/ros2_iiwa_ws
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+source /usr/share/gazebo/setup.sh
+ros2 launch iiwa_bringup iiwa.launch.py use_sim:=true start_rviz:=true use_planning:=true
+```
+
+> Wait until Gazebo opens with the robot visible and you see `You can start planning now!` in the logs.
+
+---
+
+### Step 2 — Spawn Table and Target Block in Gazebo (Terminal 2)
+
+```bash
+source /opt/ros/humble/setup.bash
+
+# Create SDF files (only needed once)
+cat > /tmp/demo_table.sdf << 'EOF'
+<?xml version="1.0" ?>
+<sdf version="1.6">
+  <model name="demo_table">
+    <static>true</static>
+    <link name="link">
+      <collision name="collision">
+        <geometry><box><size>1.0 0.8 0.75</size></box></geometry>
+      </collision>
+      <visual name="visual">
+        <geometry><box><size>1.0 0.8 0.75</size></box></geometry>
+        <material><ambient>0.7 0.7 0.7 1</ambient></material>
+      </visual>
+    </link>
+  </model>
+</sdf>
+EOF
+
+cat > /tmp/target_block.sdf << 'EOF'
+<?xml version="1.0" ?>
+<sdf version="1.6">
+  <model name="target_block">
+    <static>true</static>
+    <link name="link">
+      <collision name="collision">
+        <geometry><box><size>0.06 0.06 0.06</size></box></geometry>
+      </collision>
+      <visual name="visual">
+        <geometry><box><size>0.06 0.06 0.06</size></box></geometry>
+        <material><ambient>0.9 0.2 0.2 1</ambient></material>
+      </visual>
+    </link>
+  </model>
+</sdf>
+EOF
+
+# Spawn objects (robot base is at world x=1.0 — critical offset)
+ros2 run gazebo_ros spawn_entity.py -entity demo_table  -file /tmp/demo_table.sdf  -x 1.0 -y -0.6 -z 0.375
+ros2 run gazebo_ros spawn_entity.py -entity target_block -file /tmp/target_block.sdf -x 1.0 -y -0.3 -z 0.78
+```
+
+---
+
+### Step 3 — Add Collision Objects to MoveIt (Terminal 3)
+
+```bash
+cd /path/to/iiwa-trajectory-planning/simulation/ros2_ws
+source /opt/ros/humble/setup.bash && source install/setup.bash
+ros2 run iiwa_trajectory_demo scene_setup
+```
+
+> Expected: `SUCCESS — demo_table and target_block added to MoveIt planning scene.`
+>
+> In RViz: click **Add → MotionPlanning → OK**, then enable **Show World Geometry** to see the green collision boxes.
+
+---
+
+### Step 4 — Run Pick-and-Place Demo (Terminal 4)
+
+```bash
+cd /path/to/iiwa-trajectory-planning/simulation/ros2_ws
+source /opt/ros/humble/setup.bash && source install/setup.bash
+ros2 run iiwa_trajectory_demo pick_and_place
+```
+
+**The arm executes this sequence automatically:**
+
+| Step | Action |
+|------|--------|
+| 1 | Move to **APPROACH** — above the block (z=0.92 m) |
+| 2 | Move to **GRASP** — at block level (z=0.85 m) |
+| 3 | **GRIP** — block attaches to tool0 in MoveIt/RViz |
+| 4 | **LIFT** — rise to z=0.95 m carrying the block |
+| 5 | Move to **PLACE** — different spot on table (y=−0.5 m) |
+| 6 | **RELEASE** — block detaches + re-spawns in Gazebo at new position |
+| 7 | **RETREAT** — arm returns to home joint state |
+
+---
+
+### Alternative: Just Move End-Effector to Target
+
+```bash
+ros2 run iiwa_trajectory_demo move_to_target
+```
+
+### Alternative: Replay Raw Trajectory
+
+```bash
+ros2 run iiwa_trajectory_demo trajectory_replay --ros-args \
+  -p use_sim_time:=true \
+  -p trajectory_file:=/path/to/data/trajectory_raw_4001x7.txt \
+  -p controller_topic:=/iiwa_arm_controller/joint_trajectory \
+  -p joint_names:="[joint_a1,joint_a2,joint_a3,joint_a4,joint_a5,joint_a6,joint_a7]" \
+  -p start_delay_sec:=3.0 \
+  -p time_scale:=2.0
+```
+
+---
+
+## MATLAB Trajectory Generation
+
+> Requires MATLAB R2023a+ with Robotics System Toolbox
+
+```matlab
+% Smooth trajectory (recommended — 93% velocity reduction)
+run('src/main_smooth_joint_traj.m')
+
+% Raw baseline (shows IK branch-jump problem)
+run('src/main_raw_cartesian_ik.m')
+```
+
+---
+
+## Python Analysis
+
+```bash
+pip install -r requirements.txt
+python scripts/analyze_trajectory.py data/trajectory_raw_4001x7.txt --dt 0.005 --outdir assets
+```
+
+---
+
+## Configuration Notes
+
+- **Robot base offset:** `iiwa_base` is at world `x=1.0` — all Gazebo spawns and MoveIt goals use this offset
+- **Planning group:** `iiwa_arm`
+- **End-effector link:** `tool0`
+- **Joint names:** `joint_a1` … `joint_a7`
+- **Controller topic:** `/iiwa_arm_controller/joint_trajectory`
+- **Planning pipeline:** OMPL + RRTConnect
+
+---
 
 ## Documentation
 
-- [`docs/technical_report_original.pdf`](docs/technical_report_original.pdf): full technical report
-- [`docs/results_original.pdf`](docs/results_original.pdf): detailed results analysis
+- [`CLAUDE.md`](CLAUDE.md): Full session context, debugging table, known issues
+- [`docs/technical_report_original.pdf`](docs/technical_report_original.pdf): Technical report
+- [`docs/results_original.pdf`](docs/results_original.pdf): Detailed results
 
 ## License
 

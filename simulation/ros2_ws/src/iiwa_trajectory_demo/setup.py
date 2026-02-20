@@ -21,6 +21,9 @@ setup(
     entry_points={
         "console_scripts": [
             "trajectory_replay = iiwa_trajectory_demo.trajectory_replay:main",
+            "scene_setup = iiwa_trajectory_demo.scene_setup:main",
+            "move_to_target = iiwa_trajectory_demo.move_to_target:main",
+            "pick_and_place = iiwa_trajectory_demo.pick_and_place:main",
         ],
     },
 )
