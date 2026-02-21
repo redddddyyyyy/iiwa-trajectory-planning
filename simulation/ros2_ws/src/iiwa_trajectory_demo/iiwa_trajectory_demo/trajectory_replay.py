@@ -46,9 +46,9 @@ class TrajectoryReplayNode(Node):
         self.declare_parameter("trajectory_file", str(default_traj))
         self.declare_parameter(
             "joint_names",
-            ["A1", "A2", "A3", "A4", "A5", "A6", "A7"],
+            ["joint_a1", "joint_a2", "joint_a3", "joint_a4", "joint_a5", "joint_a6", "joint_a7"],
         )
-        self.declare_parameter("controller_topic", "/joint_trajectory_controller/joint_trajectory")
+        self.declare_parameter("controller_topic", "/iiwa_arm_controller/joint_trajectory")
         self.declare_parameter("sample_dt", 0.005)
         self.declare_parameter("time_scale", 1.0)
         self.declare_parameter("start_delay_sec", 2.0)
