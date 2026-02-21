@@ -396,6 +396,20 @@ Prints velocity/acceleration comparison and saves `data/trajectory_smooth_4001x7
 - **Full 7-step sequence confirmed working end-to-end.** Arm returns cleanly to home.
 - Smooth trajectory (`data/trajectory_smooth_4001x7.txt`) committed — 99.8% velocity reduction.
 
+### Session 7
+- **Gazebo block pickup behaviour fixed:** block now disappears from Gazebo at GRIP (step 3)
+  and reappears at the place position at RELEASE (step 5). Previously the block stayed at the
+  pick spot during the carry and teleported at release. Now: delete fired fire-and-forget in
+  `_on_grip_done()`; `_gazebo_respawn()` simplified to spawn-only (no delete chain).
+- **Code audit completed — bugs found and fixed:**
+  - `trajectory_replay.py` default joint names were `A1-A7` (wrong) → fixed to `joint_a1-joint_a7`
+  - `trajectory_replay.py` default controller topic was `/joint_trajectory_controller/joint_trajectory`
+    → fixed to `/iiwa_arm_controller/joint_trajectory`
+  - `package.xml` missing `sensor_msgs` and `tf2_ros` explicit dependencies → added
+- **All Python files verified syntax-clean** (`ast.parse` on all 5 scripts).
+- **`interview_prep.txt` added** — full project walkthrough, challenge/solution pairs,
+  key concepts, numbers to memorize, and scripted answers for common interview questions.
+
 ---
 
 ## Known Issues / Debugging
@@ -412,6 +426,8 @@ Prints velocity/acceleration comparison and saves `data/trajectory_smooth_4001x7
 | RETREAT fails error -4 (CONTROL_FAILED) | Arm at z=0.85, OMPL clips table | Cartesian pre-retreat ascent to z=0.95 (step 6) ✓ fixed |
 | CARRY fails error -4 (CONTROL_FAILED) | OMPL start state stale after Cartesian execution | Subscribe to `/joint_states`; feed into `start_state` for every OMPL call ✓ fixed |
 | Cartesian descent fails at 56% | Block in world scene triggers false collision at 4 cm gap | Remove block from world BEFORE descent; `avoid_collisions=True` now works ✓ fixed |
+| Block stays at pick position during carry in Gazebo | Gazebo delete was chained inside RELEASE | Delete block at GRIP (fire-and-forget); RELEASE does spawn-only ✓ fixed |
+| `trajectory_replay` sends to wrong controller/joints | Wrong defaults in trajectory_replay.py | Fixed defaults: `joint_a1-joint_a7` and `/iiwa_arm_controller/joint_trajectory` ✓ fixed |
 | Cartesian carry fails 55–63% | Orientation lock infeasible over 0.2 m horizontal | Use single OMPL goal for carry ✓ fixed |
 | `jump_threshold=5.0` breaks Cartesian | Relative threshold at singularities | Use `jump_threshold=0.0` always ✓ fixed |
 | Block stays on gripper after RELEASE | `robot_state.is_diff` not set; atomic detach confuses RViz | Two-stage release + `scene.robot_state.is_diff=True` ✓ fixed |
@@ -441,10 +457,10 @@ If you only see `Block detached and placed in world scene` but NOT the re-spawn 
 ## Next Steps
 
 1. **Record demo video** — capture full 7-step pick-and-place side-by-side (Gazebo + RViz) for portfolio.
-2. **Gazebo real-time carry (optional):** Integrate Gazebo link-attacher plugin so block physically follows arm during steps 3–5 instead of teleporting at release.
+2. **Gazebo real-time carry (optional):** Integrate Gazebo link-attacher plugin so block physically follows arm during carry instead of disappearing and reappearing.
 3. **Trajectory comparison demo** — run raw then smooth replay back-to-back; record both.
 4. **Run analyze_trajectory.py** — generate velocity/acceleration comparison plots for report.
-5. **Update technical report** — add Session 6 results: collision-fix, start-state fix, two-stage release, working full sequence.
+5. **Update technical report** — add Session 6/7 results: all fixes, working full sequence.
 
 ---
 
