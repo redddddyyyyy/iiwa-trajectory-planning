@@ -416,8 +416,20 @@ class PickAndPlaceNode(Node):
         req = ApplyPlanningScene.Request()
         req.scene = scene
         fut = self._scene_client.call_async(req)
-        fut.add_done_callback(
-            lambda f: self._on_scene_done(f, 'Block GRIPPED (attached to tool0).'))
+        fut.add_done_callback(self._on_grip_done)
+
+    def _on_grip_done(self, future):
+        if not future.result().success:
+            self.get_logger().error('Planning scene update failed.')
+            self._advance(False)
+            return
+        self.get_logger().info('Block GRIPPED (attached to tool0).')
+        # Delete block from Gazebo now — it disappears on pickup.
+        # Fire-and-forget: Gazebo visual update doesn't need to block the sequence.
+        req = DeleteEntity.Request()
+        req.name = 'target_block'
+        self._delete_client.call_async(req)
+        self._advance(True)
 
     # ── Release ───────────────────────────────────────────────────────────────
 
@@ -486,15 +498,7 @@ class PickAndPlaceNode(Node):
     # ── Gazebo respawn ────────────────────────────────────────────────────────
 
     def _gazebo_respawn(self):
-        req = DeleteEntity.Request()
-        req.name = 'target_block'
-        fut = self._delete_client.call_async(req)
-        fut.add_done_callback(self._on_gazebo_deleted)
-
-    def _on_gazebo_deleted(self, future):
-        if not future.result().success:
-            self.get_logger().warn(
-                f'Gazebo delete: {future.result().status_message}')
+        # Block was already deleted from Gazebo during GRIP — just spawn at place.
         req = SpawnEntity.Request()
         req.name = 'target_block'
         req.xml  = TARGET_BLOCK_SDF
